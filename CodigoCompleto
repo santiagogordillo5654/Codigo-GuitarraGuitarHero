@@ -1,0 +1,149 @@
+import time
+import analogio
+import board
+import digitalio
+import usb_hid
+from adafruit_hid.mouse import Mouse
+from adafruit_hid.keyboard import Keyboard
+from adafruit_hid.keycode import Keycode
+
+# Inicialización del mouse y teclado
+mouse = Mouse(usb_hid.devices)
+teclado = Keyboard(usb_hid.devices)
+
+# Configuración del joystick principal
+x_axis = analogio.AnalogIn(board.GP27)
+y_axis = analogio.AnalogIn(board.GP26)
+joystick_button = digitalio.DigitalInOut(board.GP21)
+joystick_button.direction = digitalio.Direction.INPUT
+joystick_button.pull = digitalio.Pull.UP
+
+# Configuración del botón para Enter en GP15
+boton_enter = digitalio.DigitalInOut(board.GP15)
+boton_enter.direction = digitalio.Direction.INPUT
+boton_enter.pull = digitalio.Pull.DOWN
+boton_enter_estado = False
+
+# Configuración del botón para Alt+F4 en GP14
+boton_alt_f4 = digitalio.DigitalInOut(board.GP14)
+boton_alt_f4.direction = digitalio.Direction.INPUT
+boton_alt_f4.pull = digitalio.Pull.DOWN
+boton_alt_f4_estado = False
+
+# Configuración de los botones del teclado
+botones_teclado_pines = {
+    board.GP16: Keycode.Z,
+    board.GP17: Keycode.X,
+    board.GP18: Keycode.C,
+    board.GP19: Keycode.V,
+    board.GP20: Keycode.SPACE
+}
+
+# Crear objetos DigitalInOut para los botones
+botones_teclado = {}
+botones_teclado_estado = {}
+
+for pin, tecla in botones_teclado_pines.items():
+    boton = digitalio.DigitalInOut(pin)
+    boton.direction = digitalio.Direction.INPUT
+    boton.pull = digitalio.Pull.DOWN
+    botones_teclado[boton] = tecla
+    botones_teclado_estado[boton] = False
+
+# Configuración del segundo joystick (solo eje Y)
+y_axis_2 = analogio.AnalogIn(board.GP28)
+
+# Parámetros del joystick
+pot_min = 0.00
+pot_max = 3.29
+step = (pot_max - pot_min) / 20.0
+dead_zone = 0.5
+
+# Parámetro para ajustar la sensibilidad del mouse
+sensibilidad = 2.0  # Incrementa este valor para mayor sensibilidad
+
+# Funciones auxiliares
+def get_voltage(pin):
+    """Obtiene el voltaje de un pin analógico"""
+    return (pin.value * 3.3) / 65536
+
+def steps(axis):
+    """Mapea los pasos del joystick a un rango de 0-20"""
+    return round((axis - pot_min) / step)
+
+# Loop principal
+try:
+    while True:
+        # Movimiento del joystick principal como mouse
+        x_steps = steps(get_voltage(x_axis))
+        y_steps = steps(get_voltage(y_axis))
+
+        # Movimiento en el eje X
+        if x_steps > 10 + dead_zone:
+            mouse.move(x=int((x_steps - 10) * sensibilidad))
+        elif x_steps < 10 - dead_zone:
+            mouse.move(x=int(-(10 - x_steps) * sensibilidad))
+
+        # Movimiento en el eje Y (invertido)
+        if y_steps > 10 + dead_zone:
+            mouse.move(y=int(-(y_steps - 10) * sensibilidad))  # Invertido
+        elif y_steps < 10 - dead_zone:
+            mouse.move(y=int((10 - y_steps) * sensibilidad))  # Invertido
+
+        # Botón del joystick como clic izquierdo del mouse
+        if not joystick_button.value:
+            mouse.press(Mouse.LEFT_BUTTON)
+        else:
+            mouse.release(Mouse.LEFT_BUTTON)
+
+        # Botón Enter en GP15
+        if boton_enter.value and not boton_enter_estado:
+            print("Botón Enter presionado")
+            teclado.press(Keycode.ENTER)
+            boton_enter_estado = True
+        elif not boton_enter.value and boton_enter_estado:
+            print("Botón Enter liberado")
+            teclado.release(Keycode.ENTER)
+            boton_enter_estado = False
+
+        # Botón Alt+F4 en GP14
+        if boton_alt_f4.value and not boton_alt_f4_estado:
+            print("Botón Alt+F4 presionado")
+            teclado.press(Keycode.ALT)
+            teclado.press(Keycode.F4)
+            boton_alt_f4_estado = True
+        elif not boton_alt_f4.value and boton_alt_f4_estado:
+            print("Botón Alt+F4 liberado")
+            teclado.release(Keycode.F4)
+            teclado.release(Keycode.ALT)
+            boton_alt_f4_estado = False
+
+        # Manejo de los botones del teclado
+        for boton, tecla in botones_teclado.items():
+            if boton.value and not botones_teclado_estado[boton]:
+                print(f"Botón presionado: {tecla}")
+                teclado.press(tecla)
+                botones_teclado_estado[boton] = True
+            elif not boton.value and botones_teclado_estado[boton]:
+                print(f"Botón soltado: {tecla}")
+                teclado.release(tecla)
+                botones_teclado_estado[boton] = False
+
+        # Movimiento del segundo joystick (solo eje Y) para teclas de flecha
+        y_steps_2 = steps(get_voltage(y_axis_2))
+
+        # Lógica para el control de flechas arriba y abajo (invertido)
+        if y_steps_2 > 10 + dead_zone:
+            teclado.press(Keycode.DOWN_ARROW)  # Invertido
+            print("Flecha abajo presionada")
+        elif y_steps_2 < 10 - dead_zone:
+            teclado.press(Keycode.UP_ARROW)  # Invertido
+            print("Flecha arriba presionada")
+        else:
+            teclado.release(Keycode.UP_ARROW)
+            teclado.release(Keycode.DOWN_ARROW)
+
+        time.sleep(0.02)  # Pausa para evitar saturación
+except KeyboardInterrupt:
+    print("Programa interrumpido manualmente.")
+    teclado.release_all()  # Liberar todas las teclas al salir
